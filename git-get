@@ -1,0 +1,167 @@
+#/usr/bin/sh
+
+program_name=${0##*/}
+
+_reset="\033[0m"
+_bold="\033[1m"
+_italic="\033[3m"
+_underline="\033[4m"
+
+print_help(){
+	echo -e "$(cat <<USAGE
+NAME:
+	${program_name} - a command line tool to clone a git repository's specific files/directories
+
+SYNOPSIS:
+	$_underline$program_name$_reset [OPTIONS]... REQUIRED_ARGS... <${_underline}repository_url$_reset>
+
+DESCRIPTION:
+	-t=<${_underline}fetch_target$_reset>, --target=<${_underline}fetch_target$_reset>
+		Path for all the files that you want to clone.
+		
+	Note:
+		- The fetch targets follow a glob pattern, henceforth you can specify what to fetch in a generic sense with regex.
+		  Something that you want to fetch will have the following pattern, /<path>/<in>/<repo>, the leading '/' is necessary as it is a part of the specifiaction
+		- This option can be used multiple times to add more than one fetch target.
+
+OPTIONS:
+	-h, --help
+		Prints this help message and exits
+	-b=<${_underline}branch/tag$_reset>, --branch=<${_underline}branch/tag$_reset>
+		Name of branch/tag to be checked out.
+	-c=<${_underline}commit_sha$_reset>, --commit=<${_underline}commit_sha$_reset>
+		Commit Hash of the commit that you want to checkout.
+	-o=<${_underline}out_dir_path$_reset>
+		The output directory for the fetched files.
+	
+	Notes:
+		- If no branch/tag/commit-sha is provided the program will default to the default branch of the repository
+		- You cannot use the branch option with commit option as they are mutually exclusive.
+		- For valid branch/tag names, see ${_bold}git-check-ref-format(1)$_reset
+		- The -o option is optional and <${_underline}out_dir_path$_reset> defaults to the basename of the repository
+		- In case the <${_underline}out_dir_path$_reset> already exist, the program will an appropriate suffix to the <${underline}out_dir_path$_reset> to prevent overwriting files.
+
+EXAMPLES:
+	- Fetch the files and directories in the root directory of the repo starting with \`hello' into a directory named \`hello-files' from the \`dev' branch
+
+		$ ${program_name} --target=/hello\* -o=hello-files -b=dev https://github.com/...
+
+	- Fetch all the png images from a repository at the commit \`ae45bb8'
+		
+		$ ${program_name} --target=/\*\*/\*.png -c=ae45bb8 https://github.com/...
+USAGE
+)"
+	exit $@
+}
+
+parse_args() {
+	[[ "0" == "#$" ]] && print_help 1
+
+	while [ $# -gt 0 ];do
+		case "$1" in
+			-b=*|--branch=*)
+				[[ -z $clone_opts ]] || {
+					echo commit sha already specified >&2
+					print_help 1
+				}
+				local branch="${1#*=}"
+				[[ -z $branch ]] && {
+					echo branch can\'t have empty value
+					print_help 1
+				}
+				git check-ref-format --branch "$branch" >/dev/null || exit 1
+				clone_opts="-n -j4 -b ${branch} --depth=1 --filter=blob:none"
+				shift
+				;;
+			-c=*|--commit=*)
+				[[ -z $clone_opts ]] || {
+					echo branch/tag already specified >&2
+					print_help 1
+				}
+				local commit_sha="${1#*=}"
+				[[ $commit_sha =~ ^[0-9a-fA-F]{1,64}$ ]] || {
+					echo "invalid commit sha"
+					exit 1
+				}
+				[[ -z $commit_sha ]] && {
+					echo sha can\'t have empty value
+					print_help 1
+				}
+				clone_opts="-n -j4 --filter=blob:none"
+				checkout_opts=$commit_sha
+				shift
+				;;
+			-o=*)
+				[[ -z $out_dir ]] || {
+					echo can\'t have multiple output directories
+					print_help 1
+				}
+				out_dir="${1#*=}"
+				[[ -z $out_dir ]] && {
+					echo out dir can\'t have empty value
+					print_help 1
+				}
+				shift
+				;;
+			-t=*|--target=*)
+				local sub_dir="${1#*=}"
+				[[ -z $sub_dir ]] && {
+					echo clone targets can\'t have empty value
+					print_help 1
+				}
+				sub_dirs="${sub_dirs} ${sub_dir}"
+				shift
+				;;
+			-h|--help)
+				print_help 0
+				;;
+			-*|--*)
+				echo invalid option
+				print_help 1
+				;;
+			*)
+				[[ -z $repo_url ]] || {
+					echo you can\'t clone multiple url\'s
+					print_help 1
+				}
+				repo_url="$1"
+				shift
+				;;
+		esac
+	done
+
+	[[ -z $repo_url ]] && {
+		echo "Need a url to clone"
+		print_help 1	
+	}
+	repo_base="${repo_url##*/}"
+	repo_base="${repo_base%.git}"
+	[[ -z $repo_base ]] && {
+		echo invalid remote repository url
+	}
+	out_dir="${out_dir:-${repo_base}}"
+	clone_opts="${clone_opts:-"-n --depth=1 --filter=blob:none"}"
+	sub_dirs="${sub_dirs# }"
+	[[ -z $sub_dirs ]] && {
+		echo at least one target node is required for cloning
+		print_help 1
+	}
+}
+parse_args "$@"
+tmpdir=$(mktemp -d)
+git clone $clone_opts "$repo_url" "$tmpdir/$repo_base" || exit 1
+git -C "$tmpdir/$repo_base" sparse-checkout set --no-cone $sub_dirs || exit 1
+git -C "$tmpdir/$repo_base" checkout $checkout_opts || exit 1
+rm -rf "$tmpdir/$repo_base/.git"
+[[ -d "$out_dir" ]] && while true; do
+	suff=1
+	if [[ -d "$out_dir-$suff" ]]; then
+		suff=$(( suff + 1 ))
+	else
+		out_dir="$out_dir-$suff"
+		break
+	fi
+done
+mkdir -p "$out_dir"
+mv "$tmpdir/$repo_base"/* "$tmpdir/$repo_base"/.* "$out_dir" 2>/dev/null
+rm -rf $tmpdir
