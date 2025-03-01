@@ -14,6 +14,7 @@ So..., I decided to bite this bullet, read the git-manual and make a bash script
 - Flag for setting a desired output directory.
 - Select file(s) using glob patterns that you want to fetch.
 - Independent of the git service provider.
+- Works with both git over ssh and http(s).
 - Single bash script implementation, which means that you can rename this script to whatever you like while install.
 
 ## Installation

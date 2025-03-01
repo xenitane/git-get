@@ -149,9 +149,15 @@ parse_args() {
 }
 parse_args "$@"
 tmpdir=$(mktemp -d)
-git clone $clone_opts "$repo_url" "$tmpdir/$repo_base" || exit 1
-git -C "$tmpdir/$repo_base" sparse-checkout set --no-cone $sub_dirs || exit 1
-git -C "$tmpdir/$repo_base" checkout $checkout_opts || exit 1
+git clone -q $clone_opts "$repo_url" "$tmpdir/$repo_base" || exit 1
+git -C "$tmpdir/$repo_base" sparse-checkout set --no-cone $sub_dirs >/dev/null || {
+	rm -rf $tmpdir
+	exit 1
+}
+git -C "$tmpdir/$repo_base" checkout -q $checkout_opts || {
+	rm -rf $tmpdir
+	exit 1
+}
 rm -rf "$tmpdir/$repo_base/.git"
 [[ -d "$out_dir" ]] && while true; do
 	suff=1
